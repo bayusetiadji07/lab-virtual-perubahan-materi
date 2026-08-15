@@ -334,7 +334,16 @@ canvas { display: block; }
   align-items: start;
 }
 
-.lab__sisi { display: grid; gap: 1rem; }
+/* minmax(0, 1fr) wajib di sini: tanpa itu, kolom grid melebar mengikuti
+ * lebar min-content isinya (mis. tab yang tidak boleh patah baris) sehingga
+ * panel kontrol meluber menabrak area simulasi. */
+.lab__sisi {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 1rem;
+  min-width: 0;
+}
+.lab__sisi > * { min-width: 0; }
 
 .lab__pentas {
   background: var(--permukaan);
@@ -494,20 +503,23 @@ canvas { display: block; }
 
 /* Segmen */
 .segmen__daftar {
-  display: flex; gap: .25rem;
+  display: flex; flex-wrap: wrap; gap: .25rem;
   background: var(--kertas); border: 1px solid var(--garis);
   border-radius: 10px; padding: .25rem;
 }
+/* flex-basis kecil + wrap: kalau semua tab tidak muat dalam satu baris,
+ * sisanya turun ke baris berikutnya alih-alih memaksa panel melebar. */
 .segmen__item {
-  flex: 1 1 0; min-width: 0;
+  flex: 1 1 5.5rem; min-width: 0;
   display: inline-flex; align-items: center; justify-content: center; gap: .35rem;
   font: 600 .82rem/1.2 var(--fon);
   padding: .45rem .5rem;
   border: 0; border-radius: 7px;
   background: transparent; color: var(--tinta-2);
-  cursor: pointer; white-space: nowrap;
+  cursor: pointer;
   transition: background .15s, color .15s, box-shadow .15s;
 }
+.segmen__item > span { overflow-wrap: anywhere; }
 .segmen__item:hover:not(:disabled) { color: var(--tinta); }
 .segmen__item.is-aktif {
   background: var(--permukaan); color: var(--aksen);

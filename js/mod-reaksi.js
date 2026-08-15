@@ -58,6 +58,46 @@
     return { x: x, y: y, w: w, h: h };
   }
 
+  /** Menggambar gambar yang diputar terhadap sebuah titik poros.
+   *  porosX/porosY adalah pecahan 0…1 dari lebar/tinggi gambar; titik itu
+   *  ditempatkan tepat di (tx, ty). Dipakai untuk memiringkan botol dan sendok
+   *  saat menuang, supaya mulutnya tetap berada di posisi yang benar. */
+  function taruhPoros(ctx, img, porosX, porosY, tx, ty, lebar, sudut, alpha) {
+    if (!img.siap) return null;
+    var w = lebar, h = w * (img.naturalHeight / img.naturalWidth);
+    ctx.save();
+    ctx.translate(tx, ty);
+    if (sudut) ctx.rotate(sudut);
+    if (alpha != null) ctx.globalAlpha = alpha;
+    ctx.drawImage(img, -porosX * w, -porosY * h, w, h);
+    ctx.restore();
+    return { w: w, h: h };
+  }
+
+  /** Aliran cairan yang menyempit dari mulut wadah sampai permukaan cairan. */
+  function gambarAliran(ctx, x, yAtas, yBawah, lebarAtas, lebarBawah, warna, t) {
+    if (yBawah <= yAtas + 2) return;
+    var langkah = 7;
+    function tepi(y) {
+      var u = (y - yAtas) / (yBawah - yAtas);
+      return {
+        setengah: Lab.lerp(lebarAtas, lebarBawah, u) / 2,
+        goyang: Math.sin(u * 5.5 - t * 9) * 1.8 * u
+      };
+    }
+    var y, e;
+    ctx.beginPath();
+    for (y = yAtas; y <= yBawah; y += langkah) { e = tepi(y); ctx.lineTo(x + e.goyang - e.setengah, y); }
+    for (y = yBawah; y >= yAtas; y -= langkah) { e = tepi(y); ctx.lineTo(x + e.goyang + e.setengah, y); }
+    ctx.closePath();
+    var g = ctx.createLinearGradient(x - lebarAtas, 0, x + lebarAtas, 0);
+    g.addColorStop(0, Lab.rgba(warna, 0.45));
+    g.addColorStop(0.42, Lab.rgba(warna, 0.95));
+    g.addColorStop(1, Lab.rgba(warna, 0.45));
+    ctx.fillStyle = g;
+    ctx.fill();
+  }
+
   /* ================= Percobaan A — Cuka + Baking Soda ================= */
 
   function buatSoda(api) {
@@ -67,9 +107,25 @@
     var gelembung = Lab.Emitor({ maks: 200 });
     var buih = [];
 
+    /* Urutan penuangan: siap → cuka → soda → reaksi.
+     * isiCuka/isiSoda adalah pecahan bahan yang sudah benar-benar masuk gelas,
+     * dipakai bersama oleh animasi maupun perhitungan tinggi cairan. */
+    var LAMA_CUKA = 2.6, LAMA_SODA = 2.2;
+    var fase = 'siap', tFase = 0;
+    var isiCuka = 0, isiSoda = 0;
+    var butiran = [];        // serbuk soda yang sedang jatuh
+    var geo = null;          // geometri gelas dari frame terakhir
+
     var imgGelas = Lab.gambar('beaker');
     var imgBotol = Lab.gambar('botol-cuka');
     var imgSoda = Lab.gambar('baking-soda');
+    var imgSendok = Lab.gambar('sendok');
+
+    /* Titik poros pada tiap aset, sebagai pecahan lebar/tinggi gambarnya. */
+    var MULUT_BOTOL = { x: 0.50, y: 0.13 };   // bibir botol cuka
+    var CEKUNG_SENDOK = { x: 0.16, y: 0.80 }; // ujung sendok yang mencekung
+
+    function mundur(u, a, b) { return Lab.smooth(clamp((u - a) / (b - a), 0, 1)); }
 
     /* Kimia: NaHCO₃ + CH₃COOH → CH₃COONa + H₂O + CO₂
      * Cuka dapur ± 5 % asam asetat (0,05 g/mL), Mr NaHCO₃ = 84, Mr CH₃COOH = 60. */
@@ -84,6 +140,39 @@
       return a < b ? 'Baking soda (cuka bersisa)' : 'Cuka (baking soda bersisa)';
     }
     function sisaAsam() { return molAsam() - molReaksi(); }
+
+    /* Tinggi cairan mengikuti volume cuka yang sudah benar-benar tertuang. */
+    function tinggiPenuh() {
+      return geo ? geo.dalam.h * clamp(0.18 + vCuka / 100 * 0.5, 0.15, 0.72) : 0;
+    }
+    function permukaanCairan() {
+      return geo ? geo.dalam.y + geo.dalam.h - tinggiPenuh() * isiCuka : 0;
+    }
+
+    var posSendok = null;   // titik cekungan sendok pada frame terakhir
+
+    function lepasButiran() {
+      if (!posSendok) return;
+      for (var i = 0, n = Math.random() < 0.7 ? 2 : 1; i < n; i++) {
+        butiran.push({
+          x: posSendok.x + rnd(-5, 5), y: posSendok.y + rnd(-2, 5),
+          vx: rnd(-16, 16), vy: rnd(10, 50), r: rnd(1.2, 2.9)
+        });
+      }
+    }
+
+    function langkahButiran(dt) {
+      if (!geo) return;
+      var permukaan = permukaanCairan();
+      for (var i = butiran.length - 1; i >= 0; i--) {
+        var b = butiran[i];
+        b.vy += 900 * dt;
+        b.x += b.vx * dt;
+        b.y += b.vy * dt;
+        // Butiran hilang begitu menyentuh cairan — massanya pindah ke endapan.
+        if (b.y >= permukaan) butiran.splice(i, 1);
+      }
+    }
 
     return {
       id: 'soda',
@@ -109,14 +198,13 @@
           onInput: function (v) { mSoda = v; if (!tercampur) api.segarkan(); }
         });
         var bCampur = ui.tombol({
-          label: 'Campurkan', ikon: '⚗️', jenis: 'utama',
+          label: 'Tuang & campurkan', ikon: '⚗️', jenis: 'utama',
           onClick: function () {
-            if (tercampur) return;
-            tercampur = true;
-            waktu = 0;
+            if (fase !== 'siap') return;
+            fase = 'cuka'; tFase = 0; waktu = 0;
             sCuka.nonaktif(true); sSoda.nonaktif(true);
             bCampur.nonaktif(true);
-            Lab.toast('Reaksi dimulai — perhatikan gelembung gasnya', 'info');
+            Lab.toast('Menuang cuka ke dalam gelas beaker…', 'info');
           }
         });
         var bLakmus = ui.tombol({
@@ -132,7 +220,9 @@
           label: 'Ulang', ikon: '↺', jenis: 'kedua',
           onClick: function () {
             tercampur = false; progres = 0; waktu = 0; suhu = 25; lakmus = null;
-            gelembung.bersihkan(); buih.length = 0;
+            fase = 'siap'; tFase = 0; isiCuka = 0; isiSoda = 0;
+            butiran.length = 0;
+            gelembung.bersihkan(); buih.length = 0; buih.tinggi = 0;
             api.resetGrafik();
             sCuka.nonaktif(false); sSoda.nonaktif(false); bCampur.nonaktif(false);
             api.segarkan();
@@ -176,6 +266,26 @@
       },
 
       langkah: function (dt) {
+        /* Tahap penuangan berjalan lebih dulu; reaksi baru mulai setelah
+         * kedua bahan benar-benar masuk ke dalam gelas. */
+        if (fase === 'cuka' || fase === 'soda') {
+          tFase += dt;
+          var lama = fase === 'cuka' ? LAMA_CUKA : LAMA_SODA;
+          var u = clamp(tFase / lama, 0, 1);
+          if (fase === 'cuka') {
+            isiCuka = mundur(u, 0.20, 0.84);
+            if (u >= 1) { fase = 'soda'; tFase = 0; }
+          } else {
+            isiSoda = mundur(u, 0.26, 0.80);
+            if (u > 0.26 && u < 0.82) lepasButiran();
+            if (u >= 1) {
+              fase = 'reaksi'; tercampur = true; tFase = 0;
+              Lab.toast('Reaksi dimulai — perhatikan gelembung gasnya', 'info');
+            }
+          }
+        }
+        langkahButiran(dt);
+
         if (!tercampur) return;
         waktu += dt;
         // Reaksi cepat di awal lalu melandai saat pereaksi menipis.
@@ -207,8 +317,6 @@
         gambarMeja(ctx, W, H);
 
         var dasar = H * MEJA_Y;
-        taruh(ctx, imgBotol, W * 0.13, dasar, H * 0.30);
-        taruh(ctx, imgSoda, W * 0.86, dasar, H * 0.17);
 
         var gh = H * 0.55;
         var rasio = imgGelas.naturalWidth ? imgGelas.naturalWidth / imgGelas.naturalHeight : 1.04;
@@ -216,25 +324,69 @@
         var gx = W * 0.5 - gw / 2, gy = dasar - gh;
         var dalam = { x: gx + gw * 0.20, y: gy + gh * 0.13, w: gw * 0.60, h: gh * 0.75 };
         api.wadah = dalam;
+        geo = { dalam: dalam };
+
+        var u = fase === 'cuka' ? clamp(tFase / LAMA_CUKA, 0, 1)
+              : fase === 'soda' ? clamp(tFase / LAMA_SODA, 0, 1) : 0;
+
+        /* ---- Posisi botol cuka: diam di meja, atau terangkat & miring menuang ---- */
+        var botolLebar = H * 0.30;
+        var mulutDiam = { x: W * 0.13, y: dasar - botolLebar * (1 - MULUT_BOTOL.y) };
+        var mulutTuang = { x: dalam.x + dalam.w * 0.30, y: dalam.y - H * 0.05 };
+        var mulut = mulutDiam, sudutBotol = 0, mengalirCuka = false;
+        if (fase === 'cuka') {
+          var angkat = mundur(u, 0, 0.20) * (1 - mundur(u, 0.86, 1));
+          mulut = {
+            x: Lab.lerp(mulutDiam.x, mulutTuang.x, angkat),
+            y: Lab.lerp(mulutDiam.y, mulutTuang.y, angkat)
+          };
+          sudutBotol = 2.05 * angkat;                 // memiringkan botol ke arah gelas
+          mengalirCuka = u > 0.19 && u < 0.86;
+        }
+
+        /* ---- Posisi sendok pembawa baking soda ---- */
+        var sendok = null;
+        if (fase === 'soda') {
+          var bawa = mundur(u, 0, 0.24) * (1 - mundur(u, 0.86, 1));
+          var miring = mundur(u, 0.26, 0.44) * (1 - mundur(u, 0.78, 0.92));
+          sendok = {
+            x: Lab.lerp(W * 0.86, dalam.x + dalam.w * 0.62, bawa),
+            y: Lab.lerp(dasar - H * 0.11, dalam.y - H * 0.04, bawa),
+            miring: miring
+          };
+          posSendok = sendok;
+        } else {
+          posSendok = null;
+        }
+
+        /* ---- Bahan yang masih menunggu di atas meja ---- */
+        if (fase !== 'cuka') taruh(ctx, imgBotol, W * 0.13, dasar, botolLebar);
+        var sisaTumpukan = 1 - isiSoda;
+        if (sisaTumpukan > 0.02) {
+          taruh(ctx, imgSoda, W * 0.86, dasar, H * 0.17 * (0.55 + 0.45 * sisaTumpukan));
+        }
 
         if (imgGelas.siap) ctx.drawImage(imgGelas, gx, gy, gw, gh);
 
         ctx.save();
         ctx.beginPath(); ctx.rect(dalam.x, dalam.y, dalam.w, dalam.h); ctx.clip();
 
-        /* Cairan: tinggi mengikuti volume cuka. */
-        var tinggiCairan = dalam.h * clamp(0.18 + vCuka / 100 * 0.5, 0.15, 0.72);
+        /* Cairan: tinggi mengikuti volume cuka yang sudah tertuang. */
+        var tinggiCairan = tinggiPenuh() * isiCuka;
         var permukaan = dalam.y + dalam.h - tinggiCairan;
-        ctx.globalAlpha = 0.75;
-        ctx.fillStyle = Lab.mix('#f2ead6', '#e8dcbd', progres);
-        Lab.permukaanBergelombang(ctx, dalam.x, permukaan, dalam.w, tinggiCairan, t, tercampur ? 3.5 : 1.4);
-        ctx.fill();
-        ctx.globalAlpha = 1;
+        if (tinggiCairan > 0.5) {
+          ctx.globalAlpha = 0.75;
+          ctx.fillStyle = Lab.mix('#f2ead6', '#e8dcbd', progres);
+          Lab.permukaanBergelombang(ctx, dalam.x, permukaan, dalam.w, tinggiCairan, t,
+            tercampur ? 3.5 : mengalirCuka ? 4.5 : 1.4);
+          ctx.fill();
+          ctx.globalAlpha = 1;
+        }
 
         /* Serbuk baking soda yang belum bereaksi mengendap di dasar. */
-        if (!tercampur) {
+        if (isiSoda > 0.01 && !tercampur) {
           ctx.fillStyle = '#f8f6f0';
-          var tebal = clamp(mSoda / 20, 0, 1) * dalam.h * 0.10 + 3;
+          var tebal = (clamp(mSoda / 20, 0, 1) * dalam.h * 0.10 + 3) * isiSoda;
           ctx.beginPath();
           ctx.ellipse(dalam.x + dalam.w / 2, dalam.y + dalam.h - tebal / 2,
             dalam.w * 0.42, tebal, 0, 0, Math.PI * 2);
@@ -265,9 +417,74 @@
           var potong = imgGelas.naturalHeight * 0.13;
           ctx.drawImage(imgGelas, 0, 0, imgGelas.naturalWidth, potong, gx, gy, gw, gh * 0.13);
         }
+
+        /* ---- Garis bantu tinggi cuka yang direncanakan, sebelum dituang ---- */
+        if (fase === 'siap') {
+          var yTarget = dalam.y + dalam.h - tinggiPenuh();
+          ctx.save();
+          ctx.setLineDash([6, 5]);
+          ctx.strokeStyle = 'rgba(193,84,31,.5)';
+          ctx.lineWidth = 1.5;
+          ctx.beginPath();
+          ctx.moveTo(dalam.x, yTarget);
+          ctx.lineTo(dalam.x + dalam.w, yTarget);
+          ctx.stroke();
+          ctx.restore();
+          ctx.font = '600 11px system-ui, sans-serif';
+          ctx.fillStyle = '#a2481b';
+          ctx.textAlign = 'center';
+          ctx.fillText(num(vCuka, 0) + ' mL cuka', dalam.x + dalam.w / 2, yTarget - 6);
+          ctx.textAlign = 'left';
+        }
+
+        /* ---- Botol yang sedang menuang, digambar di atas gelas ---- */
+        if (fase === 'cuka') {
+          taruhPoros(ctx, imgBotol, MULUT_BOTOL.x, MULUT_BOTOL.y,
+            mulut.x, mulut.y, botolLebar, sudutBotol);
+          if (mengalirCuka) {
+            gambarAliran(ctx, mulut.x, mulut.y + 2, permukaan, 7, 11, '#efe3c6', t);
+            // Riak kecil di titik jatuhnya cuka.
+            ctx.globalAlpha = 0.5;
+            ctx.strokeStyle = '#d8c9a4';
+            ctx.lineWidth = 1.5;
+            for (var ri = 0; ri < 2; ri++) {
+              var rr = 6 + ((t * 40 + ri * 14) % 24);
+              ctx.beginPath();
+              ctx.ellipse(mulut.x, permukaan, rr, rr * 0.3, 0, 0, Math.PI * 2);
+              ctx.stroke();
+            }
+            ctx.globalAlpha = 1;
+          }
+        }
+
+        /* ---- Sendok baking soda yang sedang dituang ---- */
+        if (sendok) {
+          taruhPoros(ctx, imgSendok, CEKUNG_SENDOK.x, CEKUNG_SENDOK.y,
+            sendok.x, sendok.y, W * 0.30, sendok.miring * 0.62);
+          if (sisaTumpukan > 0.02) {
+            ctx.fillStyle = '#f8f6f0';
+            ctx.beginPath();
+            ctx.ellipse(sendok.x, sendok.y - 3,
+              W * 0.020 * (0.55 + 0.45 * sisaTumpukan),
+              H * 0.011 * (0.4 + 0.6 * sisaTumpukan),
+              sendok.miring * 0.6, 0, Math.PI * 2);
+            ctx.fill();
+          }
+        }
+
+        /* ---- Butiran soda yang sedang melayang jatuh ---- */
+        ctx.fillStyle = '#f8f6f0';
+        for (var bi = 0; bi < butiran.length; bi++) {
+          var bt = butiran[bi];
+          ctx.beginPath();
+          ctx.arc(bt.x, bt.y, bt.r, 0, Math.PI * 2);
+          ctx.fill();
+        }
       },
 
       status: function () {
+        if (fase === 'cuka') return { teks: 'Menuang cuka', jenis: 'netral' };
+        if (fase === 'soda') return { teks: 'Menambahkan baking soda', jenis: 'netral' };
         if (!tercampur) return { teks: 'Belum dicampur', jenis: 'netral' };
         if (progres < 0.98) return { teks: 'Reaksi berlangsung', jenis: 'kimia' };
         return { teks: 'Reaksi selesai', jenis: 'benar' };
