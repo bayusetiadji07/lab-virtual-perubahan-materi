@@ -107,12 +107,15 @@
     var gelembung = Lab.Emitor({ maks: 200 });
     var buih = [];
 
-    /* Urutan penuangan: siap → cuka → soda → reaksi.
-     * isiCuka/isiSoda adalah pecahan bahan yang sudah benar-benar masuk gelas,
-     * dipakai bersama oleh animasi maupun perhitungan tinggi cairan. */
-    var LAMA_CUKA = 2.6, LAMA_SODA = 2.2;
-    var fase = 'siap', tFase = 0;
+    /* Tiap bahan dituang lewat langkahnya sendiri supaya kertas lakmus dapat
+     * diuji sebelum maupun sesudah baking soda ditambahkan.
+     *   tahap : kosong → adaCuka → bereaksi
+     *   anim  : animasi yang sedang berjalan, atau null kalau sedang diam */
+    var LAMA_CUKA = 2.6, LAMA_SODA = 2.2, LAMA_LAKMUS = 3.0;
+    var tahap = 'kosong';
+    var anim = null;         // { jenis: 'cuka'|'soda'|'lakmus', t, lama }
     var isiCuka = 0, isiSoda = 0;
+    var lakmusU = null;      // kemajuan animasi lakmus; null = kertas tidak tampak
     var butiran = [];        // serbuk soda yang sedang jatuh
     var geo = null;          // geometri gelas dari frame terakhir
 
@@ -125,7 +128,21 @@
     var MULUT_BOTOL = { x: 0.50, y: 0.13 };   // bibir botol cuka
     var CEKUNG_SENDOK = { x: 0.16, y: 0.80 }; // ujung sendok yang mencekung
 
+    /* Ukuran bagian dalam gelas beaker, diukur langsung dari berkas gambarnya
+     * (560 × 539 px) dan dinyatakan sebagai pecahan lebar/tinggi gambar.
+     * Garis skala tercetak pada gambar berjarak tetap 65,25 px tiap 50 mL,
+     * dengan garis 50 mL pada y = 392 px — dari sinilah tinggi cairan dihitung
+     * supaya permukaannya benar-benar sejajar dengan angka pada gelas. */
+    var GELAS = {
+      kiri: 0.225, kanan: 0.793,   // dinding dalam
+      atas: 0.140, lantai: 0.909,  // bibir dalam dan lantai
+      y50: 0.7273,                 // garis 50 mL
+      perMl: 0.002421              // pecahan tinggi gambar tiap 1 mL di atas garis 50
+    };
+
     function mundur(u, a, b) { return Lab.smooth(clamp((u - a) / (b - a), 0, 1)); }
+
+    function mulaiAnim(jenis, lama) { anim = { jenis: jenis, t: 0, lama: lama }; }
 
     /* Kimia: NaHCO₃ + CH₃COOH → CH₃COONa + H₂O + CO₂
      * Cuka dapur ± 5 % asam asetat (0,05 g/mL), Mr NaHCO₃ = 84, Mr CH₃COOH = 60. */
@@ -139,17 +156,80 @@
       if (Math.abs(a - b) < 1e-4) return 'Tepat habis bereaksi';
       return a < b ? 'Baking soda (cuka bersisa)' : 'Cuka (baking soda bersisa)';
     }
-    function sisaAsam() { return molAsam() - molReaksi(); }
+    function sisaAsam() { return molAsam() - molReaksi() * progres; }
+    function sisaSoda() { return molSoda() - molReaksi() * progres; }
 
-    /* Tinggi cairan mengikuti volume cuka yang sudah benar-benar tertuang. */
-    function tinggiPenuh() {
-      return geo ? geo.dalam.h * clamp(0.18 + vCuka / 100 * 0.5, 0.15, 0.72) : 0;
+    /** Tinggi permukaan (koordinat y kanvas) untuk sekian mL, mengikuti skala
+     *  yang tercetak pada gelas. Di bawah garis 50 mL skalanya diteruskan lurus
+     *  ke lantai gelas, karena gambar aslinya memang tidak bergaris di situ. */
+    function yUntukMl(ml) {
+      if (!geo) return 0;
+      var y50 = geo.gy + geo.gh * GELAS.y50;
+      var lantai = geo.gy + geo.gh * GELAS.lantai;
+      if (ml >= 50) return y50 - (ml - 50) * geo.gh * GELAS.perMl;
+      return lantai - (ml / 50) * (lantai - y50);
     }
     function permukaanCairan() {
-      return geo ? geo.dalam.y + geo.dalam.h - tinggiPenuh() * isiCuka : 0;
+      return geo ? yUntukMl(vCuka * isiCuka) : 0;
     }
 
     var posSendok = null;   // titik cekungan sendok pada frame terakhir
+
+    /* Kertas lakmus merah & biru dicelupkan bersama — cara baku di sekolah
+     * untuk membedakan asam, basa, dan netral sekaligus. */
+    var LAKMUS_BIRU = '#6c8fd4', LAKMUS_MERAH = '#d0666c';
+
+    function hitungLakmus() {
+      if (tahap === 'adaCuka') { lakmus = 'asam'; return; }
+      if (sisaAsam() > 1e-4) lakmus = 'asam-sisa';
+      else if (sisaSoda() > 1e-4) lakmus = 'basa';
+      else lakmus = 'netral';
+    }
+
+    function warnaLakmus() {
+      var asam = lakmus === 'asam' || lakmus === 'asam-sisa';
+      return {
+        biru: asam ? '#c4404a' : LAKMUS_BIRU,
+        merah: lakmus === 'basa' ? '#3f6ec8' : LAKMUS_MERAH
+      };
+    }
+
+    /** Dua helai kertas lakmus turun ke dalam larutan, ujungnya berubah warna,
+     *  lalu terangkat kembali dan tetap tampak sebagai hasil pengujian. */
+    function gambarLakmus(ctx, dalam, permukaan, u) {
+      var lebar = Math.max(9, dalam.w * 0.115);
+      var tinggi = dalam.h * 0.46;
+      var pusat = dalam.x + dalam.w / 2;
+      var diam = dalam.y - tinggi * 0.62;                  // menggantung di atas gelas
+      var celup = permukaan - tinggi + dalam.h * 0.12;     // ujung terendam
+      var posisi = mundur(u, 0, 0.28) * (1 - mundur(u, 0.58, 0.82));
+      var atas = Lab.lerp(diam, celup, posisi);
+      var berubah = u >= 0.42;
+      var warna = warnaLakmus();
+
+      [{ k: 'biru', dasar: LAKMUS_BIRU, sisi: -1 },
+       { k: 'merah', dasar: LAKMUS_MERAH, sisi: 1 }].forEach(function (p) {
+        var x = pusat + p.sisi * lebar * 0.78 - lebar / 2;
+
+        Lab.persegiBulat(ctx, x, atas, lebar, tinggi, 3);
+        ctx.fillStyle = p.dasar;
+        ctx.fill();
+
+        if (berubah) {
+          ctx.save();
+          Lab.persegiBulat(ctx, x, atas, lebar, tinggi, 3);
+          ctx.clip();
+          ctx.fillStyle = warna[p.k];
+          ctx.fillRect(x, atas + tinggi * 0.60, lebar, tinggi * 0.40);
+          ctx.restore();
+        }
+
+        Lab.persegiBulat(ctx, x, atas, lebar, tinggi, 3);
+        ctx.strokeStyle = 'rgba(28,42,56,.4)';
+        ctx.lineWidth = 1;
+        ctx.stroke();
+      });
+    }
 
     function lepasButiran() {
       if (!posSendok) return;
@@ -177,7 +257,8 @@
     return {
       id: 'soda',
       judul: 'Cuka + Baking Soda',
-      ringkas: 'Asam cuka direaksikan dengan natrium bikarbonat. Amati gas yang terbentuk dan suhu yang justru turun.',
+      ringkas: 'Cuka dan baking soda dituang terpisah, supaya sifat larutan dapat diuji dengan kertas ' +
+        'lakmus sebelum dan sesudah bereaksi. Amati gas yang terbentuk dan suhu yang justru turun.',
       grafik: {
         sumbuX: { label: 'Waktu reaksi (detik)', min: 0, max: 12 },
         sumbuY: { label: 'Volume gas CO₂ (mL)', min: 0, max: 500, auto: true },
@@ -187,54 +268,84 @@
         'Volume gas maksimum ditentukan oleh pereaksi pembatas.',
 
       kontrol: function () {
+        var sibuk = !!anim;
+
         var sCuka = ui.slider({
           label: 'Volume cuka', min: 10, max: 100, step: 5, nilai: vCuka, satuan: 'mL',
-          keterangan: 'Cuka dapur mengandung sekitar 5 % asam asetat.',
-          onInput: function (v) { vCuka = v; if (!tercampur) api.segarkan(); }
+          keterangan: 'Cuka dapur mengandung sekitar 5 % asam asetat. Sebelum dituang, ' +
+            'tinggi rencananya ditandai garis putus-putus pada gelas.',
+          onInput: function (v) { vCuka = v; }
         });
+        sCuka.nonaktif(sibuk || tahap !== 'kosong');
+
         var sSoda = ui.slider({
           label: 'Massa baking soda', min: 1, max: 20, step: 1, nilai: mSoda, satuan: 'gram',
           keterangan: 'Natrium bikarbonat (NaHCO₃).',
-          onInput: function (v) { mSoda = v; if (!tercampur) api.segarkan(); }
+          onInput: function (v) { mSoda = v; }
         });
-        var bCampur = ui.tombol({
-          label: 'Tuang & campurkan', ikon: '⚗️', jenis: 'utama',
+        sSoda.nonaktif(sibuk || tahap === 'bereaksi');
+
+        var bCuka = ui.tombol({
+          label: 'Tuang cuka', ikon: '🧴', jenis: 'utama',
           onClick: function () {
-            if (fase !== 'siap') return;
-            fase = 'cuka'; tFase = 0; waktu = 0;
-            sCuka.nonaktif(true); sSoda.nonaktif(true);
-            bCampur.nonaktif(true);
-            Lab.toast('Menuang cuka ke dalam gelas beaker…', 'info');
-          }
-        });
-        var bLakmus = ui.tombol({
-          label: 'Uji kertas lakmus', ikon: '📄', jenis: 'kedua',
-          onClick: function () {
-            lakmus = !tercampur ? 'asam'
-              : sisaAsam() > 1e-4 ? 'asam-sisa'
-              : molSoda() > molReaksi() + 1e-4 ? 'basa' : 'netral';
+            if (anim || tahap !== 'kosong') return;
+            mulaiAnim('cuka', LAMA_CUKA);
+            lakmus = null; lakmusU = null;
             api.segarkan();
           }
         });
+        bCuka.nonaktif(sibuk || tahap !== 'kosong');
+
+        var bLakmus = ui.tombol({
+          label: 'Uji kertas lakmus', ikon: '📄',
+          jenis: tahap === 'adaCuka' ? 'utama' : 'kedua',
+          onClick: function () {
+            if (anim || tahap === 'kosong') return;
+            mulaiAnim('lakmus', LAMA_LAKMUS);
+            lakmus = null;   // dikosongkan dulu supaya hasil dihitung ulang saat kertas terendam
+            lakmusU = 0;
+            api.segarkan();
+          }
+        });
+        bLakmus.nonaktif(sibuk || tahap === 'kosong');
+
+        var bSoda = ui.tombol({
+          label: 'Tambahkan baking soda', ikon: '🥄',
+          jenis: tahap === 'adaCuka' ? 'utama' : 'kedua',
+          onClick: function () {
+            if (anim || tahap !== 'adaCuka') return;
+            mulaiAnim('soda', LAMA_SODA);
+            waktu = 0;
+            lakmus = null; lakmusU = null;
+            api.segarkan();
+          }
+        });
+        bSoda.nonaktif(sibuk || tahap !== 'adaCuka');
+
         var bUlang = ui.tombol({
           label: 'Ulang', ikon: '↺', jenis: 'kedua',
           onClick: function () {
-            tercampur = false; progres = 0; waktu = 0; suhu = 25; lakmus = null;
-            fase = 'siap'; tFase = 0; isiCuka = 0; isiSoda = 0;
+            tercampur = false; progres = 0; waktu = 0; suhu = 25;
+            tahap = 'kosong'; anim = null;
+            isiCuka = 0; isiSoda = 0;
+            lakmus = null; lakmusU = null;
             butiran.length = 0;
             gelembung.bersihkan(); buih.length = 0; buih.tinggi = 0;
             api.resetGrafik();
-            sCuka.nonaktif(false); sSoda.nonaktif(false); bCampur.nonaktif(false);
             api.segarkan();
           }
         });
 
         return [
-          ui.grup('Bahan', [sCuka.el, sSoda.el]),
-          ui.grup('Kendali percobaan', [
-            ui.barisTombol([bCampur, bUlang]),
+          ui.grup('Langkah 1 — Tuang cuka', [sCuka.el, ui.barisTombol([bCuka])]),
+          ui.grup('Langkah 2 — Uji sifat larutan', [
+            el('p.kontrol__ket', { style: { margin: '0 0 .55rem' } },
+              'Boleh diuji kapan saja: sebelum baking soda ditambahkan, saat reaksi ' +
+              'berlangsung, maupun setelah reaksi selesai.'),
             ui.barisTombol([bLakmus])
-          ])
+          ]),
+          ui.grup('Langkah 3 — Tambahkan baking soda', [sSoda.el, ui.barisTombol([bSoda])]),
+          ui.grup('Kendali percobaan', [ui.barisTombol([bUlang])])
         ];
       },
 
@@ -250,13 +361,15 @@
       tambahan: function () {
         if (!lakmus) return null;
         var teks = {
-          'asam': 'Kertas lakmus biru berubah merah — cuka bersifat asam.',
-          'asam-sisa': 'Lakmus biru masih berubah merah — cuka bersisa, larutan tetap asam.',
-          'basa': 'Lakmus merah berubah biru — baking soda bersisa, larutan bersifat basa.',
-          'netral': 'Warna kertas lakmus tidak berubah — larutan mendekati netral, tanda pereaksi habis bereaksi.'
+          'asam': 'Lakmus biru berubah merah, lakmus merah tetap merah — cuka bersifat asam.',
+          'asam-sisa': 'Lakmus biru masih berubah merah — cuka belum habis bereaksi, larutan tetap asam.',
+          'basa': 'Lakmus merah berubah biru, lakmus biru tetap biru — baking soda bersisa, larutan bersifat basa.',
+          'netral': 'Kedua kertas lakmus tidak berubah warna — larutan mendekati netral, tanda kedua pereaksi habis bereaksi.'
         }[lakmus];
+        var kapan = tahap === 'adaCuka' ? 'sebelum baking soda ditambahkan'
+          : progres < 0.98 ? 'saat reaksi masih berlangsung' : 'setelah reaksi selesai';
         return el('.umpan', { 'data-jenis': 'benar' }, [
-          el('strong', 'Hasil uji lakmus'),
+          el('strong', 'Hasil uji lakmus (' + kapan + ')'),
           teks,
           el('img', {
             src: 'assets/lakmus.png', alt: 'Kertas lakmus sebagai indikator pH',
@@ -266,22 +379,30 @@
       },
 
       langkah: function (dt) {
-        /* Tahap penuangan berjalan lebih dulu; reaksi baru mulai setelah
-         * kedua bahan benar-benar masuk ke dalam gelas. */
-        if (fase === 'cuka' || fase === 'soda') {
-          tFase += dt;
-          var lama = fase === 'cuka' ? LAMA_CUKA : LAMA_SODA;
-          var u = clamp(tFase / lama, 0, 1);
-          if (fase === 'cuka') {
+        /* Setiap penuangan berjalan sebagai animasi tersendiri; reaksi baru
+         * dimulai setelah baking soda benar-benar masuk ke dalam gelas. */
+        if (anim) {
+          anim.t += dt;
+          var u = clamp(anim.t / anim.lama, 0, 1);
+
+          if (anim.jenis === 'cuka') {
             isiCuka = mundur(u, 0.20, 0.84);
-            if (u >= 1) { fase = 'soda'; tFase = 0; }
-          } else {
+            if (u >= 1) { anim = null; tahap = 'adaCuka'; api.segarkan(); }
+
+          } else if (anim.jenis === 'soda') {
             isiSoda = mundur(u, 0.26, 0.80);
             if (u > 0.26 && u < 0.82) lepasButiran();
             if (u >= 1) {
-              fase = 'reaksi'; tercampur = true; tFase = 0;
+              anim = null; tahap = 'bereaksi'; tercampur = true;
               Lab.toast('Reaksi dimulai — perhatikan gelembung gasnya', 'info');
+              api.segarkan();
             }
+
+          } else {
+            lakmusU = u;
+            // Warna kertas ditentukan tepat ketika ujungnya terendam.
+            if (u >= 0.42 && !lakmus) { hitungLakmus(); api.segarkan(); }
+            if (u >= 1) { anim = null; api.segarkan(); }
           }
         }
         langkahButiran(dt);
@@ -322,12 +443,17 @@
         var rasio = imgGelas.naturalWidth ? imgGelas.naturalWidth / imgGelas.naturalHeight : 1.04;
         var gw = gh * rasio;
         var gx = W * 0.5 - gw / 2, gy = dasar - gh;
-        var dalam = { x: gx + gw * 0.20, y: gy + gh * 0.13, w: gw * 0.60, h: gh * 0.75 };
+        var dalam = {
+          x: gx + gw * GELAS.kiri,
+          y: gy + gh * GELAS.atas,
+          w: gw * (GELAS.kanan - GELAS.kiri),
+          h: gh * (GELAS.lantai - GELAS.atas)
+        };
         api.wadah = dalam;
-        geo = { dalam: dalam };
+        geo = { dalam: dalam, gx: gx, gy: gy, gw: gw, gh: gh };
 
-        var u = fase === 'cuka' ? clamp(tFase / LAMA_CUKA, 0, 1)
-              : fase === 'soda' ? clamp(tFase / LAMA_SODA, 0, 1) : 0;
+        var fase = anim ? anim.jenis : null;
+        var u = anim ? clamp(anim.t / anim.lama, 0, 1) : 0;
 
         /* ---- Posisi botol cuka: diam di meja, atau terangkat & miring menuang ---- */
         var botolLebar = H * 0.30;
@@ -371,9 +497,10 @@
         ctx.save();
         ctx.beginPath(); ctx.rect(dalam.x, dalam.y, dalam.w, dalam.h); ctx.clip();
 
-        /* Cairan: tinggi mengikuti volume cuka yang sudah tertuang. */
-        var tinggiCairan = tinggiPenuh() * isiCuka;
-        var permukaan = dalam.y + dalam.h - tinggiCairan;
+        /* Cairan: permukaannya dihitung dari skala tercetak pada gelas,
+         * mengikuti volume cuka yang sudah benar-benar tertuang. */
+        var permukaan = permukaanCairan();
+        var tinggiCairan = (dalam.y + dalam.h) - permukaan;
         if (tinggiCairan > 0.5) {
           ctx.globalAlpha = 0.75;
           ctx.fillStyle = Lab.mix('#f2ead6', '#e8dcbd', progres);
@@ -419,8 +546,8 @@
         }
 
         /* ---- Garis bantu tinggi cuka yang direncanakan, sebelum dituang ---- */
-        if (fase === 'siap') {
-          var yTarget = dalam.y + dalam.h - tinggiPenuh();
+        if (tahap === 'kosong' && !anim) {
+          var yTarget = yUntukMl(vCuka);
           ctx.save();
           ctx.setLineDash([6, 5]);
           ctx.strokeStyle = 'rgba(193,84,31,.5)';
@@ -480,12 +607,19 @@
           ctx.arc(bt.x, bt.y, bt.r, 0, Math.PI * 2);
           ctx.fill();
         }
+
+        /* ---- Kertas lakmus, selama dan sesudah pengujian ---- */
+        if (lakmusU != null) gambarLakmus(ctx, dalam, permukaan, lakmusU);
       },
 
       status: function () {
-        if (fase === 'cuka') return { teks: 'Menuang cuka', jenis: 'netral' };
-        if (fase === 'soda') return { teks: 'Menambahkan baking soda', jenis: 'netral' };
-        if (!tercampur) return { teks: 'Belum dicampur', jenis: 'netral' };
+        if (anim) {
+          if (anim.jenis === 'cuka') return { teks: 'Menuang cuka', jenis: 'netral' };
+          if (anim.jenis === 'soda') return { teks: 'Menambahkan baking soda', jenis: 'netral' };
+          return { teks: 'Menguji kertas lakmus', jenis: 'netral' };
+        }
+        if (tahap === 'kosong') return { teks: 'Gelas masih kosong', jenis: 'netral' };
+        if (tahap === 'adaCuka') return { teks: 'Berisi cuka saja', jenis: 'netral' };
         if (progres < 0.98) return { teks: 'Reaksi berlangsung', jenis: 'kimia' };
         return { teks: 'Reaksi selesai', jenis: 'benar' };
       },
@@ -519,7 +653,13 @@
             'Massa baking soda': num(mSoda, 0) + ' g',
             'Volume gas CO₂': num(volGas(), 0) + ' mL',
             'Pereaksi pembatas': pembatas(),
-            'Suhu akhir': num(suhu, 1) + ' °C'
+            'Suhu akhir': num(suhu, 1) + ' °C',
+            'Uji lakmus': {
+              'asam': 'Asam (lakmus biru → merah)',
+              'asam-sisa': 'Asam, cuka bersisa (lakmus biru → merah)',
+              'basa': 'Basa (lakmus merah → biru)',
+              'netral': 'Netral (kedua lakmus tetap)'
+            }[lakmus] || 'Belum diuji'
           },
           kesimpulan: 'Terbentuk zat baru (natrium asetat, air, dan gas CO₂). Ditandai gas dan penurunan suhu, ' +
             'serta tidak dapat dikembalikan menjadi cuka dan baking soda semula → perubahan kimia.'
@@ -975,6 +1115,7 @@
         tujuan: 'Mengidentifikasi ciri-ciri perubahan kimia dari hasil percobaan.',
         langkah: [
           'Pilih salah satu percobaan pada tab di atas panel kontrol.',
+          'Pada percobaan cuka + baking soda, kerjakan langkah 1–3 berurutan. <strong>Uji kertas lakmus dua kali</strong>: setelah cuka dituang, lalu sesudah reaksi selesai — bandingkan hasilnya.',
           'Atur variabelnya, jalankan percobaan, lalu amati apa yang berubah: warna, suhu, gas, atau zat sisanya.',
           'Perhatikan panel <strong>Ciri perubahan yang terdeteksi</strong> — semua ciri itu tercatat otomatis ke jurnal.',
           'Bandingkan ketiga percobaan: adakah yang bisa dikembalikan ke keadaan semula?'
