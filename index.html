@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lab Virtual — Perubahan Materi</title>
+<meta name="description" content="Laboratorium virtual interaktif untuk mempelajari perubahan fisika dan perubahan kimia: perubahan wujud zat, pelarutan, reaksi kimia sederhana, klasifikasi peristiwa, dan jurnal observasi digital.">
+<meta name="color-scheme" content="light">
+<meta name="theme-color" content="#1f6fb2">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%231f6fb2'/%3E%3Ccircle cx='11' cy='12' r='4' fill='%23fff'/%3E%3Ccircle cx='21' cy='19' r='5.5' fill='%23ffd15c'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+
+<header class="bilah">
+  <div class="bilah__dalam">
+    <a class="bilah__merek" href="#/beranda">
+      <span class="bilah__logo" aria-hidden="true">⚗️</span>
+      <span class="bilah__nama">Lab Virtual
+        <small>Perubahan Materi · Kurikulum Merdeka</small>
+      </span>
+    </a>
+    <nav class="bilah__nav" aria-label="Modul laboratorium">
+      <a class="bilah__tautan" href="#/beranda"     data-nav="beranda"     data-warna="fisika"><span class="bilah__ikon" aria-hidden="true">🏠</span>Beranda</a>
+      <a class="bilah__tautan" href="#/wujud"       data-nav="wujud"       data-warna="fisika"><span class="bilah__ikon" aria-hidden="true">🧊</span>Wujud Zat</a>
+      <a class="bilah__tautan" href="#/larutan"     data-nav="larutan"     data-warna="fisika"><span class="bilah__ikon" aria-hidden="true">🥄</span>Melarutkan</a>
+      <a class="bilah__tautan" href="#/reaksi"      data-nav="reaksi"      data-warna="kimia"><span class="bilah__ikon" aria-hidden="true">🧪</span>Reaksi Kimia</a>
+      <a class="bilah__tautan" href="#/klasifikasi" data-nav="klasifikasi" data-warna="campur"><span class="bilah__ikon" aria-hidden="true">🗂️</span>Klasifikasi</a>
+      <a class="bilah__tautan" href="#/jurnal"      data-nav="jurnal"      data-warna="jurnal"><span class="bilah__ikon" aria-hidden="true">📓</span>Jurnal</a>
+    </nav>
+  </div>
+</header>
+
+<main class="laman" id="view" tabindex="-1"></main>
+
+<footer class="kaki">
+  <div class="kaki__dalam">
+    <p>Lab Virtual Perubahan Materi — media pembelajaran IPA. Semua simulasi berjalan di perangkat ini; tidak ada data yang dikirim ke mana pun.</p>
+  </div>
+</footer>
+
+<script src="js/core.js"></script>
+<script src="js/ui.js"></script>
+<script src="js/engine.js"></script>
+<script src="js/chart.js"></script>
+<script src="js/journal.js"></script>
+<script src="js/quiz.js"></script>
+<script src="js/mod-beranda.js"></script>
+<script src="js/mod-wujud.js"></script>
+<script src="js/mod-larutan.js"></script>
+<script src="js/mod-reaksi.js"></script>
+<script src="js/mod-klasifikasi.js"></script>
+<script src="js/mod-jurnal.js"></script>
+<script>window.Lab.mulai();</script>
+
+</body>
+</html>
