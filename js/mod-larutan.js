@@ -15,6 +15,8 @@
     garam: {
       nama: 'Garam dapur', rumus: 'NaCl', gambar: 'garam',
       maks: 40, langkah: 1,
+      // Sekali sendok: cukup besar untuk melewati batas jenuh (± 17,9 g pada 25 °C).
+      sendokMaks: 25, sendokLangkah: 1,
       // Kelarutan dalam g per 100 mL air.
       kelarutan: function (T) { return 35.7 + 0.028 * (T - 20); },
       warnaButir: '#dceaf2', warnaLarut: '#9fd0e8',
@@ -23,14 +25,16 @@
     gula: {
       nama: 'Gula pasir', rumus: 'C₁₂H₂₂O₁₁', gambar: 'gula',
       maks: 200, langkah: 5,
+      sendokMaks: 120, sendokLangkah: 5,
       kelarutan: function (T) { return 203 + 2.6 * (T - 20); },
       warnaButir: '#f6efe0', warnaLarut: '#e8c98a',
       catatan: 'Kelarutan gula naik tajam saat air dipanaskan.'
     }
   };
 
-  /* Tata letak panggung, pecahan dari lebar/tinggi kanvas. */
-  var TL = { mejaY: 0.92, gelasCx: 0.46, gelasAtas: 0.09, gelasBawah: 0.90 };
+  /* Tata letak panggung, pecahan dari lebar/tinggi kanvas. Gelas digeser ke kiri
+   * dan sedikit diperkecil agar tersisa ruang untuk sendok yang menunggu. */
+  var TL = { mejaY: 0.92, gelasCx: 0.42, gelasAtas: 0.17, gelasBawah: 0.90 };
   var DALAM = { x: 0.20, y: 0.13, w: 0.60, h: 0.75 };
 
   /* Sumbu sendok pada gambar aslinya miring −31,7°; dipakai untuk memutar. */
@@ -44,12 +48,19 @@
     mount: function (view) {
       /* ----- keadaan ----- */
       var zatKini = 'garam';
-      var massaDitambah = 0;     // gram
+      var massaSendok = 0;       // gram, zat yang sedang ditakar di sendok
+      var massaDitambah = 0;     // gram, yang sudah masuk ke dalam air
       var massaLarut = 0;        // gram
       var suhu = 25;             // °C
       var mengaduk = false;
       var waktu = 0;
       var tanda = {};
+
+      /* Zat ditakar dulu di sendok, baru dituang. Selama menuang, massaDitambah
+       * naik bertahap mengikuti butiran yang benar-benar jatuh ke air. */
+      var LAMA_TUANG = 2.0;
+      var animTuang = null;      // { t, massa } atau null
+      var butirJatuh = [];       // butiran yang sedang melayang turun
 
       var butiran = [];   // zat terlarut sebagai titik-titik dalam air
       var endapanButir = [];
@@ -74,9 +85,10 @@
         judul: 'Petunjuk kegiatan',
         tujuan: 'Menyelidiki pengaruh jenis zat, suhu, dan pengadukan terhadap kelarutan.',
         langkah: [
-          'Pilih zat terlarut, lalu geser <strong>Massa zat</strong> sedikit demi sedikit.',
-          'Nyalakan <strong>Pengadukan</strong> dan amati berapa cepat butiran menghilang.',
-          'Terus tambahkan zat sampai muncul <strong>endapan</strong> di dasar gelas — itu tanda larutan sudah jenuh.',
+          'Pilih zat terlarut, lalu geser <strong>Massa zat di sendok</strong> — takarannya terlihat menumpuk di sendok.',
+          'Tekan <strong>Tuangkan ke air</strong>. Butiran jatuh ke dasar gelas dan menumpuk sebagai <strong>endapan</strong>.',
+          'Nyalakan <strong>Pengadukan</strong> dan amati endapan berkurang sampai habis larut.',
+          'Ulangi penuangan sampai endapan tidak mau larut lagi walau diaduk — itu tanda larutan sudah jenuh.',
           'Saat sudah ada endapan, naikkan suhu air. Bandingkan hasilnya pada garam dan pada gula.',
           'Perhatikan: apakah garam berubah menjadi zat lain, atau hanya menyebar di antara partikel air?'
         ]
@@ -109,11 +121,26 @@
       });
 
       var sMassa = ui.slider({
-        label: 'Massa zat', min: 0, max: ZAT.garam.maks, step: ZAT.garam.langkah,
+        label: 'Massa zat di sendok', min: 0, max: ZAT.garam.sendokMaks, step: ZAT.garam.sendokLangkah,
         nilai: 0, satuan: 'gram',
-        keterangan: 'Zat yang ditambahkan ke dalam 50 mL air.',
-        onInput: function (v) { aturMassa(v); }
+        keterangan: 'Takaran ini terlihat menumpuk di sendok, belum masuk ke air.',
+        onInput: function (v) { massaSendok = v; segarkanTuang(); }
       });
+
+      var bTuang = ui.tombol({
+        label: 'Tuangkan ke air', ikon: '🥄', jenis: 'utama',
+        onClick: function () {
+          if (animTuang || massaSendok <= 0) return;
+          animTuang = { t: 0, massa: massaSendok, sudahMasuk: 0 };
+          segarkanTuang();
+        }
+      });
+
+      /* Dipanggil setiap kali takaran berubah supaya tombol langsung ikut
+       * aktif/mati, tidak menunggu putaran loop berikutnya. */
+      function segarkanTuang() {
+        bTuang.nonaktif(!!animTuang || massaSendok <= 0);
+      }
 
       var sSuhu = ui.slider({
         label: 'Suhu air', min: 5, max: 90, step: 1, nilai: 25, satuan: '°C',
@@ -138,8 +165,8 @@
       });
 
       tata.kontrol.appendChild(ui.panel('Panel kontrol', [
-        ui.grup('Bahan', [sZat.el, sMassa.el]),
-        ui.grup('Perlakuan', [sSuhu.el, sAduk.el]),
+        ui.grup('Langkah 1 — Takar zat', [sZat.el, sMassa.el, ui.barisTombol([bTuang])]),
+        ui.grup('Langkah 2 — Perlakuan', [sSuhu.el, sAduk.el]),
         ui.grup('Kendali percobaan', [ui.barisTombol([bUlang, bCatat])])
       ]));
 
@@ -247,34 +274,41 @@
 
       function gantiZat() {
         var z = zat();
-        massaDitambah = 0; massaLarut = 0;
+        massaDitambah = 0; massaLarut = 0; massaSendok = 0;
+        animTuang = null; butirJatuh.length = 0;
         butiran.length = 0; endapanButir.length = 0;
         tanda = {};
-        sMassa.input.max = z.maks;
-        sMassa.input.step = z.langkah;
+        sMassa.input.max = z.sendokMaks;
+        sMassa.input.step = z.sendokLangkah;
         sMassa.set(0);
         if (catatanZat) catatanZat.textContent = z.catatan;
+        segarkanTuang();
         grafik.reset();
         waktu = 0;
       }
 
-      function aturMassa(v) {
-        // Menambah zat: butiran baru masuk sebagai zat belum larut.
-        massaDitambah = v;
-        if (massaLarut > massaDitambah) massaLarut = massaDitambah;
-      }
-
       function ulang() {
-        massaDitambah = 0; massaLarut = 0; waktu = 0; tanda = {};
+        massaDitambah = 0; massaLarut = 0; massaSendok = 0; waktu = 0; tanda = {};
+        animTuang = null; butirJatuh.length = 0;
         butiran.length = 0; endapanButir.length = 0;
         sMassa.set(0); sSuhu.set(25); suhu = 25;
         sAduk.set(false); mengaduk = false;
+        segarkanTuang();
         grafik.reset();
       }
 
+      /* Adanya endapan belum tentu berarti jenuh: bisa jadi zatnya memang belum
+       * sempat larut. Jenuh baru terjadi bila yang dituang melampaui batas
+       * kelarutan, sehingga endapannya tidak akan habis walau diaduk. */
+      function melampauiBatas() { return massaDitambah > kelarutanMaks() + 0.05; }
+
       function statusLarutan() {
         if (massaDitambah <= 0.001) return { teks: 'Air murni', jenis: 'netral' };
-        if (endapan() > 0.25) return { teks: 'Jenuh — ada endapan', jenis: 'ingat' };
+        if (endapan() > 0.25) {
+          return melampauiBatas()
+            ? { teks: 'Jenuh — endapan tidak larut lagi', jenis: 'ingat' }
+            : { teks: 'Sedang melarut', jenis: 'fisika' };
+        }
         if (massaLarut > kelarutanMaks() - 0.5) return { teks: 'Tepat jenuh', jenis: 'ingat' };
         return { teks: 'Belum jenuh', jenis: 'fisika' };
       }
@@ -313,7 +347,7 @@
         var kunciJenuh = zatKini + '-jenuh';
         var kunciLarutLagi = zatKini + '-larut-lagi';
 
-        if (endapan() > 0.5 && !tanda[kunciJenuh]) {
+        if (melampauiBatas() && endapan() > 0.5 && !tanda[kunciJenuh]) {
           tanda[kunciJenuh] = true;
           tanda[kunciLarutLagi] = false;
           catat('Larutan mencapai titik jenuh');
@@ -354,6 +388,30 @@
 
       /* ---------- gambar ---------- */
 
+      var posSendok = null;   // titik cekungan sendok penakar pada frame terakhir
+
+      function lepasButirJatuh() {
+        if (!posSendok) return;
+        for (var i = 0, n = Math.random() < 0.7 ? 2 : 1; i < n; i++) {
+          butirJatuh.push({
+            x: posSendok.x + rnd(-6, 6), y: posSendok.y + rnd(0, 7),
+            vx: rnd(-20, 6), vy: rnd(10, 50),
+            r: rnd(1.6, 3.4), putar: rnd(0, Math.PI)
+          });
+        }
+      }
+
+      /** Butiran jatuh sampai menyentuh permukaan air, lalu dianggap masuk. */
+      function langkahButirJatuh(dt, air) {
+        for (var i = butirJatuh.length - 1; i >= 0; i--) {
+          var b = butirJatuh[i];
+          b.vy += 900 * dt;
+          b.x += b.vx * dt;
+          b.y += b.vy * dt;
+          if (b.y >= air.y) butirJatuh.splice(i, 1);
+        }
+      }
+
       function gambarPengaduk(ctx, bx, by, panjang, sudut) {
         if (!imgSendok.siap) return;
         var dw = panjang / PANJANG_SENDOK;
@@ -363,6 +421,52 @@
         ctx.rotate(sudut - SUDUT_SENDOK);
         ctx.drawImage(imgSendok, -0.16 * dw, -0.79 * dh, dw, dh);
         ctx.restore();
+      }
+
+      /** Sendok penakar: menunggu di kanan meja dengan gundukan zat di
+       *  cekungannya, lalu bergerak ke mulut gelas dan dimiringkan menuang. */
+      function gambarSendokTakar(ctx, W, H, dalam) {
+        var z = zat();
+        var diam = { x: W * 0.87, y: H * 0.80 };
+        var diTuang = { x: dalam.x + dalam.w * 0.58, y: dalam.y - H * 0.015 };
+        var bx = diam.x, by = diam.y;
+        var sudutDiam = -Math.PI / 2 + 0.25;
+        var sudut = sudutDiam;
+        var massaTampil = massaSendok;
+
+        if (animTuang) {
+          var u = clamp(animTuang.t / LAMA_TUANG, 0, 1);
+          var datang = Lab.smooth(clamp(u / 0.30, 0, 1));
+          var pulang = Lab.smooth(clamp((u - 0.78) / 0.22, 0, 1));
+          var geser = datang * (1 - pulang);
+          bx = Lab.lerp(diam.x, diTuang.x, geser);
+          by = Lab.lerp(diam.y, diTuang.y, geser);
+          // Memiringkan sendok ke arah gelas, lalu menegakkannya kembali.
+          var miring = Lab.smooth(clamp((u - 0.30) / 0.14, 0, 1)) *
+                       (1 - Lab.smooth(clamp((u - 0.72) / 0.12, 0, 1)));
+          sudut = sudutDiam + miring * 0.95;
+          massaTampil = animTuang.massa * (1 - Lab.norm(u, 0.32, 0.76));
+        }
+
+        posSendok = { x: bx, y: by };
+        // Sengaja lebih pendek daripada pengaduk agar gagangnya tidak
+        // menyenggol kartu data pengamatan di kanan atas.
+        gambarPengaduk(ctx, bx, by, dalam.h * 0.82, sudut);
+
+        if (massaTampil > 0.01) {
+          var lebar = dalam.w * 0.115 * (0.55 + 0.45 * clamp(massaTampil / z.sendokMaks, 0, 1));
+          ctx.save();
+          ctx.translate(bx, by);
+          ctx.rotate(sudut + Math.PI / 2);
+          ctx.beginPath();
+          ctx.ellipse(0, -lebar * 0.40, lebar, lebar * 0.58, 0, 0, Math.PI * 2);
+          ctx.fillStyle = z.warnaButir;
+          ctx.fill();
+          ctx.strokeStyle = 'rgba(120,150,170,.5)';
+          ctx.lineWidth = 0.8;
+          ctx.stroke();
+          ctx.restore();
+        }
       }
 
       function gambar(ctx, W, H, t) {
@@ -464,6 +568,25 @@
             -Math.PI / 2 + ayun * 0.28);
         }
 
+        /* Butiran yang sedang jatuh dari sendok ke permukaan air. */
+        if (butirJatuh.length) {
+          ctx.fillStyle = z.warnaButir;
+          ctx.strokeStyle = 'rgba(120,150,170,.5)';
+          ctx.lineWidth = 0.7;
+          butirJatuh.forEach(function (b) {
+            ctx.save();
+            ctx.translate(b.x, b.y);
+            ctx.rotate(b.putar);
+            if (zatKini === 'garam') Lab.persegiBulat(ctx, -b.r, -b.r, b.r * 2, b.r * 2, b.r * 0.28);
+            else { ctx.beginPath(); ctx.arc(0, 0, b.r * 0.92, 0, Math.PI * 2); }
+            ctx.fill(); ctx.stroke();
+            ctx.restore();
+          });
+        }
+
+        /* Sendok penakar beserta takarannya. */
+        gambarSendokTakar(ctx, W, H, dalam);
+
         return { dalam: dalam, air: air };
       }
 
@@ -474,21 +597,42 @@
         var k = Lab.siapkanKanvas(kanvas);
         waktu += dt;
 
+        /* Penuangan dari sendok: zat berpindah ke air bertahap. */
+        if (animTuang) {
+          animTuang.t += dt;
+          var ut = clamp(animTuang.t / LAMA_TUANG, 0, 1);
+          var porsi = Lab.smooth(clamp((ut - 0.32) / 0.44, 0, 1));
+          var masukBaru = animTuang.massa * porsi - animTuang.sudahMasuk;
+          if (masukBaru > 0) {
+            animTuang.sudahMasuk += masukBaru;
+            massaDitambah = Math.min(zat().maks, massaDitambah + masukBaru);
+          }
+          if (ut > 0.32 && ut < 0.78) lepasButirJatuh();
+          if (ut >= 1) {
+            animTuang = null;
+            massaSendok = 0;
+            sMassa.set(0);
+            segarkanTuang();
+          }
+        }
+
         var batas = kelarutanMaks();
         var target = Math.min(massaDitambah, batas);
 
-        /* Laju pelarutan: dipercepat oleh pengadukan dan suhu tinggi. */
-        var laju = 0.9 * (mengaduk ? 3.2 : 1) * (0.45 + 0.55 * suhu / 90);
+        /* Laju pelarutan: tanpa diaduk berlangsung lambat sehingga endapan
+         * sempat terlihat menumpuk; pengadukan dan suhu tinggi mempercepatnya. */
+        var laju = 0.22 * (mengaduk ? 6.5 : 1) * (0.45 + 0.55 * suhu / 90);
         if (massaLarut < target) {
-          massaLarut = Math.min(target, massaLarut + (target - massaLarut) * laju * dt + 0.05 * dt);
+          massaLarut = Math.min(target, massaLarut + (target - massaLarut) * laju * dt + 0.02 * dt);
         } else if (massaLarut > target) {
           // Suhu turun → sebagian zat mengkristal kembali (lebih lambat).
-          massaLarut = Math.max(target, massaLarut - (massaLarut - target) * laju * 0.5 * dt - 0.05 * dt);
+          massaLarut = Math.max(target, massaLarut - (massaLarut - target) * laju * 0.5 * dt - 0.02 * dt);
         }
 
         var hasil = gambar(k.ctx, k.w, k.h, t);
         selaraskanButiran(hasil.dalam, hasil.air);
         selaraskanEndapan(hasil.dalam);
+        langkahButirJatuh(dt, hasil.air);
 
         /* Gerak partikel terlarut: acak termal + pusaran bila diaduk. */
         var air = hasil.air;
