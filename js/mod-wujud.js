@@ -73,11 +73,20 @@
       /* ----- keadaan simulasi ----- */
       var E = 0;
       var waktu = 0;
-      var berjalan = false;
       var daya = 0;          // −1 … 1
       var lajuWaktu = 1;
       var dEsebelum = 0;
       var tandaTercatat = {};
+
+      /* Percobaan dimulai dengan gelas kosong: es batu dimasukkan lebih dulu,
+       * barulah model partikelnya muncul. Setelah itu simulasi berjalan sendiri
+       * begitu slider daya pemanas digeser — tidak ada tombol jalankan. */
+      var LAMA_ES = 2.2;
+      var esMasuk = false;
+      var animEs = null;     // 0 … 1 selagi es dijatuhkan, null bila tidak
+      var digeser = false;   // slider daya sudah pernah disentuh
+
+      function sedangJalan() { return esMasuk && digeser; }
 
       var sistem = Lab.SistemPartikel({ jumlah: 110, radius: 6.4 });
       var uap = Lab.Emitor({ maks: 90 });
@@ -86,6 +95,7 @@
       var imgGelas = Lab.gambar('beaker');
       var imgLampu = Lab.gambar('bunsen');
       var imgTermo = Lab.gambar('termometer');
+      var imgEs = Lab.gambar('es-batu');
 
       /* ----- kerangka halaman ----- */
       view.appendChild(ui.kepalaModul({
@@ -100,7 +110,8 @@
         judul: 'Petunjuk kegiatan',
         tujuan: 'Menjelaskan hubungan kalor, suhu, gerak partikel, dan perubahan wujud zat.',
         langkah: [
-          'Geser <strong>Daya pemanas</strong> ke kanan, lalu tekan <strong>Jalankan</strong>.',
+          'Tekan <strong>Masukkan es batu</strong>. Setelah es berada di dalam gelas, susunan partikelnya akan terlihat.',
+          'Geser <strong>Daya pemanas</strong> ke kanan — percobaan langsung berjalan begitu slider digeser.',
           'Amati gerak partikel: makin panas, makin cepat bergetar dan makin renggang susunannya.',
           'Perhatikan grafik. Catat pada suhu berapa garisnya <strong>mendatar</strong> — itu saat zat sedang berubah wujud.',
           'Setelah semua air menguap, geser slider ke kiri (pendingin) untuk membalik prosesnya.',
@@ -124,9 +135,23 @@
       /* ----- kontrol ----- */
       var sDaya = ui.slider({
         label: 'Daya pemanas', min: -100, max: 100, step: 1, nilai: 0, satuan: '%',
-        keterangan: 'Nilai negatif berarti zat didinginkan (kalor dilepas).',
+        keterangan: 'Menggeser slider ini langsung menjalankan percobaan. ' +
+          'Nilai negatif berarti zat didinginkan (kalor dilepas).',
         tanda: [{ nilai: -100, label: 'dingin' }, { nilai: 0, label: '0' }, { nilai: 100, label: 'panas' }],
-        onInput: function (v) { daya = v / 100; }
+        onInput: function (v) {
+          daya = v / 100;
+          if (esMasuk) digeser = true;
+        }
+      });
+      sDaya.nonaktif(true);   // baru aktif setelah es dimasukkan
+
+      var bMasukEs = ui.tombol({
+        label: 'Masukkan es batu', ikon: '🧊', jenis: 'utama',
+        onClick: function () {
+          if (esMasuk || animEs != null) return;
+          animEs = 0;
+          bMasukEs.nonaktif(true);
+        }
       });
 
       var sLaju = ui.segmen({
@@ -135,15 +160,6 @@
         nilai: '1',
         keterangan: 'Mendidih memerlukan kalor jauh lebih besar daripada melebur, jadi tahap itu memang lama.',
         onChange: function (v) { lajuWaktu = +v; }
-      });
-
-      var bJalan = ui.tombol({
-        label: 'Jalankan', ikon: '▶', jenis: 'utama',
-        onClick: function () {
-          berjalan = !berjalan;
-          bJalan.setLabel(berjalan ? 'Jeda' : 'Jalankan');
-          bJalan.setIkon(berjalan ? '⏸' : '▶');
-        }
       });
 
       var bUlang = ui.tombol({
@@ -157,11 +173,12 @@
       });
 
       tata.kontrol.appendChild(ui.panel('Panel kontrol', [
-        ui.grup('Sumber kalor', [sDaya.el, sLaju.el]),
-        ui.grup('Kendali percobaan', [
-          ui.barisTombol([bJalan, bUlang]),
-          ui.barisTombol([bCatat])
-        ])
+        ui.grup('Langkah 1 — Siapkan zat', [
+          ui.barisTombol([bMasukEs]),
+          el('p.kontrol__ket', 'Masukkan 100 gram es batu ke dalam gelas beaker untuk melihat susunan partikelnya.')
+        ]),
+        ui.grup('Langkah 2 — Sumber kalor', [sDaya.el, sLaju.el]),
+        ui.grup('Kendali percobaan', [ui.barisTombol([bUlang, bCatat])])
       ]));
 
       var dataPengamatan = [
@@ -332,9 +349,9 @@
       function ulang() {
         E = 0; waktu = 0; dEsebelum = 0;
         tandaTercatat = {};
-        berjalan = false;
-        bJalan.setLabel('Jalankan'); bJalan.setIkon('▶');
-        sDaya.set(0); daya = 0;
+        esMasuk = false; animEs = null; digeser = false;
+        bMasukEs.nonaktif(false);
+        sDaya.set(0); daya = 0; sDaya.nonaktif(true);
         grafik.reset();
         uap.bersihkan(); gelembung.bersihkan();
         sistem.reset(Lab.FASE.PADAT);
@@ -409,6 +426,37 @@
         }
       }
 
+      /** Es batu: mula-mula diam di meja, lalu terangkat melengkung ke mulut
+       *  gelas, jatuh ke dasar, dan memudar berganti menjadi model partikel. */
+      function gambarEsBatu(ctx, W, H, dalam, u) {
+        if (!imgEs.siap) return;
+        var ukuran = dalam.w * 0.62;
+        var diMeja = { x: W * 0.14, y: H * TL.mejaY - ukuran / 2 };
+        var diAtas = { x: dalam.x + dalam.w / 2, y: dalam.y - ukuran * 0.72 };
+        var diDasar = { x: dalam.x + dalam.w / 2, y: dalam.y + dalam.h - ukuran / 2 - 2 };
+        var cx, cy;
+
+        if (u <= 0) {
+          cx = diMeja.x; cy = diMeja.y;
+        } else if (u < 0.45) {
+          var a = Lab.smooth(u / 0.45);
+          cx = Lab.lerp(diMeja.x, diAtas.x, a);
+          cy = Lab.lerp(diMeja.y, diAtas.y, a) - Math.sin(a * Math.PI) * H * 0.07;
+        } else if (u < 0.72) {
+          var b = (u - 0.45) / 0.27;
+          cx = diAtas.x;
+          cy = Lab.lerp(diAtas.y, diDasar.y, b * b);      // jatuh makin cepat
+        } else {
+          cx = diDasar.x; cy = diDasar.y;
+        }
+
+        var alfa = u < 0.72 ? 1 : 1 - Lab.smooth((u - 0.72) / 0.28);
+        if (alfa <= 0.01) return;
+        ctx.globalAlpha = alfa;
+        ctx.drawImage(imgEs, cx - ukuran / 2, cy - ukuran / 2, ukuran, ukuran);
+        ctx.globalAlpha = 1;
+      }
+
       function gambar(ctx, W, H, t) {
         ctx.clearRect(0, 0, W, H);
         gambarMeja(ctx, W, H);
@@ -478,8 +526,18 @@
         }
 
         gelembung.gambar(ctx);
-        sistem.gambar(ctx, WARNA_FASE);
+        /* Partikel baru muncul setelah es batu masuk, disilangkan halus dengan
+         * gambar es batunya supaya terlihat sebagai zat yang sama. */
+        var uEs = animEs == null ? (esMasuk ? 1 : 0) : animEs;
+        var alfaPartikel = esMasuk ? 1 : Lab.smooth(clamp((uEs - 0.72) / 0.28, 0, 1));
+        if (alfaPartikel > 0.01) {
+          ctx.globalAlpha = alfaPartikel;
+          sistem.gambar(ctx, WARNA_FASE);
+          ctx.globalAlpha = 1;
+        }
         ctx.restore();
+
+        if (!esMasuk) gambarEsBatu(ctx, W, H, dalam, uEs);
 
         /* Kilau kaca di depan isi gelas. */
         var kilau = ctx.createLinearGradient(gx, 0, gx + gw, 0);
@@ -509,7 +567,19 @@
       var loop = Lab.loop(function (dt, t) {
         var k = Lab.siapkanKanvas(kanvas);
 
-        if (berjalan) {
+        /* Animasi memasukkan es berjalan lebih dulu, di luar waktu percobaan. */
+        if (animEs != null) {
+          animEs += dt / LAMA_ES;
+          if (animEs >= 1) {
+            animEs = null;
+            esMasuk = true;
+            sDaya.nonaktif(false);
+            Lab.toast('Es batu sudah di dalam gelas — geser daya pemanas untuk memulai', 'info');
+          }
+        }
+
+        var jalan = sedangJalan();
+        if (jalan) {
           var langkah = dt * lajuWaktu;
           var T = suhuDari(E);
           var masuk = daya >= 0 ? daya * DAYA_PANAS : daya * DAYA_DINGIN;
@@ -542,7 +612,7 @@
         }
 
         /* Gelembung di dalam air ketika mendidih. */
-        if (E > E3 && E < E4 && berjalan) {
+        if (E > E3 && E < E4 && jalan) {
           for (var i = 0; i < 2; i++) {
             if (Math.random() > 0.55) continue;
             gelembung.lepas({
@@ -569,10 +639,12 @@
           baca.set('kalor', num(E / 1000, 1));
           baca.set('waktu', num(waktu, 0));
           lencanaWujud.textContent = w.teks;
-          lencanaProses.textContent = !berjalan ? 'Dijeda'
+          lencanaProses.textContent = !esMasuk ? 'Gelas masih kosong'
+            : !digeser ? 'Siap dipanaskan'
             : daya > 0.02 ? 'Menyerap kalor'
             : daya < -0.02 ? 'Melepas kalor' : 'Tanpa pemanas';
-          lencanaProses.dataset.jenis = daya > 0.02 ? 'ingat' : daya < -0.02 ? 'fisika' : 'netral';
+          lencanaProses.dataset.jenis = !esMasuk || !digeser ? 'netral'
+            : daya > 0.02 ? 'ingat' : daya < -0.02 ? 'fisika' : 'netral';
         }
         if (frame % 5 === 0) grafik.gambar();
         frame++;
