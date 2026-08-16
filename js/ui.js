@@ -191,10 +191,16 @@
 
   /* ---------- Pembacaan data ---------- */
 
-  /** daftar: [{ kunci, label, nilai, satuan, warna }] */
-  ui.pembacaan = function (daftar) {
+  /** daftar: [{ kunci, label, nilai, satuan, warna, panggung }]
+   *  opsi.gaya === 'panggung' menghasilkan kartu ringkas yang ditempel di atas
+   *  area simulasi; butir dengan panggung:false dilewati pada gaya itu. */
+  ui.pembacaan = function (daftar, opsi) {
+    opsi = opsi || {};
+    var diPanggung = opsi.gaya === 'panggung';
     var sel = {};
-    var node = el('.pembacaan', daftar.map(function (d) {
+    var isi = daftar.filter(function (d) { return !diPanggung || d.panggung !== false; });
+
+    var node = el('.pembacaan' + (diPanggung ? '.pembacaan--panggung' : ''), isi.map(function (d) {
       var nilai = el('span.pembacaan__nilai', d.nilai == null ? '–' : d.nilai);
       sel[d.kunci] = nilai;
       return el('.pembacaan__item', { 'data-warna': d.warna || null }, [
@@ -202,6 +208,7 @@
         el('.pembacaan__baris', [nilai, d.satuan ? el('span.pembacaan__satuan', d.satuan) : null])
       ]);
     }));
+
     return {
       el: node,
       set: function (kunci, nilai) {
@@ -210,6 +217,15 @@
       warna: function (kunci, warna) {
         if (sel[kunci]) sel[kunci].closest('.pembacaan__item').dataset.warna = warna || '';
       }
+    };
+  };
+
+  /** Menyatukan beberapa pembacaan supaya satu panggilan set() memperbarui
+   *  salinan di panel samping dan salinan di atas area simulasi sekaligus. */
+  ui.gabungPembacaan = function (daftar) {
+    return {
+      set: function (kunci, nilai) { daftar.forEach(function (b) { b.set(kunci, nilai); }); },
+      warna: function (kunci, warna) { daftar.forEach(function (b) { b.warna(kunci, warna); }); }
     };
   };
 

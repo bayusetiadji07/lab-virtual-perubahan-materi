@@ -143,14 +143,20 @@
         ui.grup('Kendali percobaan', [ui.barisTombol([bUlang, bCatat])])
       ]));
 
-      var baca = ui.pembacaan([
+      var dataPengamatan = [
         { kunci: 'larut', label: 'Zat terlarut', nilai: '0', satuan: 'g', warna: 'aksen' },
         { kunci: 'endapan', label: 'Endapan', nilai: '0', satuan: 'g' },
         { kunci: 'kons', label: 'Konsentrasi', nilai: '0', satuan: 'g/100 mL' },
         { kunci: 'batas', label: 'Batas kelarutan', nilai: '0', satuan: 'g' }
-      ]);
+      ];
+      /* Salinan ringkas menempel di atas panggung supaya angkanya terbaca
+       * bersamaan dengan kristal yang sedang melarut. */
+      var bacaPanel = ui.pembacaan(dataPengamatan);
+      var bacaHud = ui.pembacaan(dataPengamatan, { gaya: 'panggung' });
+      var baca = ui.gabungPembacaan([bacaPanel, bacaHud]);
+      tata.panggung.appendChild(bacaHud.el);
       tata.kontrol.appendChild(ui.panel('Data pengamatan', [
-        baca.el,
+        bacaPanel.el,
         el('p.kontrol__ket', { style: { marginTop: '.7rem' } }, ZAT.garam.catatan)
       ]));
       var catatanZat = tata.kontrol.querySelector('.panel:last-child .kontrol__ket');

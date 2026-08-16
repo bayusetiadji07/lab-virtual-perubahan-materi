@@ -353,7 +353,8 @@
         return [
           { kunci: 'gas', label: 'Volume gas CO₂', nilai: '0', satuan: 'mL', warna: 'aksen' },
           { kunci: 'suhu', label: 'Suhu campuran', nilai: '25,0', satuan: '°C' },
-          { kunci: 'batas', label: 'Pereaksi pembatas', nilai: '–' },
+          // Teksnya panjang, jadi cukup tampil di panel samping.
+          { kunci: 'batas', label: 'Pereaksi pembatas', nilai: '–', panggung: false },
           { kunci: 'maju', label: 'Kemajuan reaksi', nilai: '0', satuan: '%' }
         ];
       },
@@ -1131,6 +1132,15 @@
       var lencanaStatus = ui.lencana('Belum dimulai', 'netral');
       hud.appendChild(lencanaStatus);
 
+      /* Pembacaan pada area simulasi dibuat ulang tiap ganti percobaan, jadi
+       * salinan lamanya dilepas dulu supaya tidak menumpuk. */
+      var hudBaca = null;
+      function pasangHudBaca(node) {
+        if (hudBaca && hudBaca.parentNode) hudBaca.parentNode.removeChild(hudBaca);
+        hudBaca = node;
+        tata.panggung.appendChild(node);
+      }
+
       var pemilih = ui.segmen({
         label: 'Pilih percobaan',
         opsi: [
@@ -1176,8 +1186,12 @@
 
         panelKontrol.appendChild(el('div', aktif.kontrol()));
 
-        baca = ui.pembacaan(aktif.pembacaan());
-        panelData.appendChild(baca.el);
+        var daftarBaca = aktif.pembacaan();
+        var bacaPanel = ui.pembacaan(daftarBaca);
+        var bacaHud = ui.pembacaan(daftarBaca, { gaya: 'panggung' });
+        baca = ui.gabungPembacaan([bacaPanel, bacaHud]);
+        pasangHudBaca(bacaHud.el);
+        panelData.appendChild(bacaPanel.el);
         panelData.appendChild(el('p.kontrol__ket', { style: { marginTop: '.7rem' } }, aktif.ringkas));
         var tambah = aktif.tambahan && aktif.tambahan();
         if (tambah) panelData.appendChild(el('div', { style: { marginTop: '.8rem' } }, tambah));

@@ -35,7 +35,8 @@
     lampuCx: 0.44, lampuT: 0.20,
     kasaY: 0.50,
     gelasCx: 0.44, gelasAtas: 0.10,
-    termoCx: 0.86, termoAtas: 0.13, termoT: 0.62
+    // Termometer diturunkan agar ujung atasnya tidak tertutup kartu data pengamatan.
+    termoCx: 0.86, termoAtas: 0.26, termoT: 0.60
   };
 
   /* Kotak dalam gelas beaker, sebagai pecahan dari kotak gambar gelas. */
@@ -163,13 +164,19 @@
         ])
       ]));
 
-      var baca = ui.pembacaan([
+      var dataPengamatan = [
         { kunci: 'suhu', label: 'Suhu zat', nilai: '−25', satuan: '°C', warna: 'aksen' },
         { kunci: 'wujud', label: 'Wujud', nilai: 'Padat' },
         { kunci: 'kalor', label: 'Kalor diserap', nilai: '0', satuan: 'kJ' },
         { kunci: 'waktu', label: 'Waktu', nilai: '0', satuan: 's' }
-      ]);
-      tata.kontrol.appendChild(ui.panel('Data pengamatan', baca.el));
+      ];
+      /* Data tampil dua kali: ringkas di atas panggung supaya bisa diamati
+       * sambil melihat partikelnya, dan lengkap di panel samping. */
+      var bacaPanel = ui.pembacaan(dataPengamatan);
+      var bacaHud = ui.pembacaan(dataPengamatan, { gaya: 'panggung' });
+      var baca = ui.gabungPembacaan([bacaPanel, bacaHud]);
+      tata.panggung.appendChild(bacaHud.el);
+      tata.kontrol.appendChild(ui.panel('Data pengamatan', bacaPanel.el));
 
       /* ----- grafik ----- */
       var kanvasGrafik = el('canvas.grafik__kanvas', {
